@@ -205,6 +205,81 @@ def transcribe_with_whisper(
     return model.transcribe(str(audio_path), word_timestamps=True, language=whisper_language)
 
 
+_FASTER_WHISPER_MODEL_CACHE: Dict[str, Any] = {}
+
+
+def _get_faster_whisper_model(model_name: str = "base"):
+    """Load and cache a faster-whisper (CTranslate2) model on the CPU."""
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as error:
+        raise RuntimeError(
+            "faster-whisper is not installed. Install it with: uv add faster-whisper"
+        ) from error
+    if model_name not in _FASTER_WHISPER_MODEL_CACHE:
+        logger.info("Loading faster-whisper model: %s (int8, cpu)", model_name)
+        # int8 on the CPU is several times faster than openai-whisper's FP32
+        # with near-identical accuracy; 0 threads lets CTranslate2 use every core.
+        _FASTER_WHISPER_MODEL_CACHE[model_name] = WhisperModel(
+            model_name, device="cpu", compute_type="int8", cpu_threads=0
+        )
+    return _FASTER_WHISPER_MODEL_CACHE[model_name]
+
+
+def transcribe_with_faster_whisper(
+    video_path: Path, model_name: str = "base", language: Optional[str] = None
+) -> Dict[str, Any]:
+    """Transcribe with faster-whisper, returning an openai-whisper style dict.
+
+    The result has the same shape as ``transcribe_with_whisper`` (seconds,
+    ``segments`` with ``words``), so formatting and caching are shared.
+    """
+    audio_path = _prepare_audio_for_transcription(video_path)
+    model = _get_faster_whisper_model(model_name)
+    whisper_language = language.split("_", 1)[0] if language else None
+    logger.info(
+        "Starting faster-whisper transcription with model: %s (language: %s)",
+        model_name,
+        whisper_language or "auto",
+    )
+    segments_iter, info = model.transcribe(
+        str(audio_path), word_timestamps=True, language=whisper_language
+    )
+    duration = float(getattr(info, "duration", 0) or 0)
+    segments: List[Dict[str, Any]] = []
+    next_log_at = 0.0
+    for segment in segments_iter:
+        segments.append(
+            {
+                "start": float(segment.start),
+                "end": float(segment.end),
+                "text": segment.text,
+                "words": [
+                    {
+                        "word": word.word,
+                        "start": float(word.start),
+                        "end": float(word.end),
+                        "probability": float(word.probability),
+                    }
+                    for word in segment.words or []
+                ],
+            }
+        )
+        if duration and segment.end >= next_log_at:
+            logger.info(
+                "faster-whisper progress: %.0f%% (%.0fs of %.0fs)",
+                100 * segment.end / duration,
+                segment.end,
+                duration,
+            )
+            next_log_at = segment.end + 120
+    return {
+        "text": "".join(segment["text"] for segment in segments).strip(),
+        "segments": segments,
+        "language": getattr(info, "language", None),
+    }
+
+
 def _whisper_result_to_transcript_data(whisper_result: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a Whisper result dict to the standard transcript-cache format.
 
@@ -331,7 +406,7 @@ def get_video_transcript(
     runtime_config = get_config()
     provider = runtime_config.transcription_provider
 
-    if provider == "whisper":
+    if provider in ("whisper", "faster_whisper"):
         return _get_transcript_with_whisper(video_path, runtime_config)
     if provider == "youtube_captions":
         if not source_url:
@@ -417,8 +492,17 @@ def _get_transcript_with_assemblyai(
 def _get_transcript_with_whisper(video_path: Path, runtime_config) -> str:
     """Get transcript using local Whisper with word-level timestamps."""
     model_name = runtime_config.whisper_model
-    logger.info("Starting Whisper transcription with model: %s", model_name)
-    whisper_result = transcribe_with_whisper(
+    transcribe = (
+        transcribe_with_faster_whisper
+        if runtime_config.transcription_provider == "faster_whisper"
+        else transcribe_with_whisper
+    )
+    logger.info(
+        "Starting %s transcription with model: %s",
+        runtime_config.transcription_provider,
+        model_name,
+    )
+    whisper_result = transcribe(
         video_path, model_name, runtime_config.transcription_language or None
     )
 
