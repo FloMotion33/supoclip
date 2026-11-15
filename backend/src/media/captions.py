@@ -27,6 +27,7 @@ from .common import (
     HOOK_TITLE_SECONDS,
     HOOK_TITLE_SIDE_MARGIN_FRAC,
     HOOK_TITLE_TOP_MARGIN_FRAC,
+    SENTENCE_END_RE,
     _EMOJI_SUPPORT_CACHE,
     logger,
 )
@@ -524,6 +525,30 @@ def _passage_breaks(
     return breaks
 
 
+def _sentence_breaks(words: List[Dict[str, Any]]) -> List[int]:
+    """Word indices that start a new sentence.
+
+    Without them a fixed-size line shows the next sentence's first words
+    ("...won't. All right") before they are spoken.
+    """
+    return [
+        index + 1
+        for index, word in enumerate(words[:-1])
+        if SENTENCE_END_RE.search(str(word.get("text", "")).strip())
+    ]
+
+
+def caption_line_bounds(
+    words: List[Dict[str, Any]], chunk_size: int, breaks: Iterable[int] = ()
+) -> List[Tuple[int, int]]:
+    """``(start, stop)`` word indices of each caption line.
+
+    Lines hold at most ``chunk_size`` words and never cross a sentence end or a
+    passage break. The clip editor groups words the same way (``captionGroups``).
+    """
+    return list(_chunk_bounds(len(words), chunk_size, [*breaks, *_sentence_breaks(words)]))
+
+
 def _chunk_bounds(word_count: int, chunk_size: int, breaks: List[int]):
     """Caption lines of ``chunk_size`` words that never straddle a passage break.
 
@@ -562,7 +587,7 @@ def build_assemblyai_ass_subtitles(
     wrap_lines: bool = False,
     center_x_override: Optional[int] = None,
     hook_editor_style: Optional[Dict[str, Any]] = None,
-    caption_placements: Optional[List[Optional[Dict[str, Any]]]] = None,
+    caption_placements: Optional[Dict[int, Dict[str, Any]]] = None,
     avoid_band: Optional[Tuple[float, float]] = None,
     caption_layout_report: Optional[Dict[str, Any]] = None,
     output_offsets: Optional[List[float]] = None,
@@ -763,7 +788,7 @@ def build_assemblyai_ass_subtitles(
 
     word_widths = [display_width(index, word) for index, word in enumerate(relevant_words)]
     chunk_spans: List[Tuple[int, int, float]] = []
-    for chunk_start, chunk_stop in _chunk_bounds(len(relevant_words), chunk_size, passage_breaks):
+    for chunk_start, chunk_stop in caption_line_bounds(relevant_words, chunk_size, passage_breaks):
         if wrap_lines:
             chunk_spans.append((chunk_start, chunk_stop, 1.0))
             continue
@@ -850,8 +875,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         prefix = line_prefix(chunk_scale)
         entrance_tags = line_entrance(chunk_scale)
         outline_px, shadow_px, box_bord = original_geometry
-        placement = (caption_placements[chunk_start // chunk_size]
-                     if caption_placements and chunk_start // chunk_size < len(caption_placements) else None)
+        # Keyed by the line's first word index (``caption_line_bounds``).
+        placement = (caption_placements or {}).get(chunk_start)
         if placement is not None:
             px = placement["font_px"]
             outline_px = max(base_stroke, round(px * base_stroke / 26)) if has_outline else 0

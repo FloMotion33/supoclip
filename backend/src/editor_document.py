@@ -327,7 +327,7 @@ def editor_caption_template(style: CaptionStyle) -> dict:
 
 def write_ass(path: Path, document: EditDocument, width: int, height: int):
     """Write captions with the generation renderer so edits keep the clip's animation."""
-    from .media.captions import build_assemblyai_ass_subtitles
+    from .media.captions import build_assemblyai_ass_subtitles, caption_line_bounds
 
     style = document.captions
     words = mapped_words(document) if style.enabled else []
@@ -335,15 +335,16 @@ def write_ass(path: Path, document: EditDocument, width: int, height: int):
     hook_transform = document.textTransforms.get("hook", TextTransform())
     original_font_px = max(1, round(style.size * width / 1080))
     font_px = max(1, round(style.size * width * caption_transform.scale / 1080))
-    placements = []
-    for index in range(0, len(words), style.wordsPerLine):
-        group = words[index:index + style.wordsPerLine]
+    placements = {}
+    for index, stop in caption_line_bounds(words, style.wordsPerLine):
+        group = words[index:stop]
         placement = document.captionTransforms.get(caption_key(document, group))
-        placements.append(None if placement is None else {
-            "font_px": max(1, round((placement.size if placement.size is not None else style.size) * width * placement.scale / 1080)),
-            "x": round((0.5 + placement.x) * width),
-            "y": round((style.y + placement.y) * height),
-        })
+        if placement is not None:
+            placements[index] = {
+                "font_px": max(1, round((placement.size if placement.size is not None else style.size) * width * placement.scale / 1080)),
+                "x": round((0.5 + placement.x) * width),
+                "y": round((style.y + placement.y) * height),
+            }
     written = build_assemblyai_ass_subtitles(
         path,
         0,

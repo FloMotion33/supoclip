@@ -16,6 +16,14 @@ import {
 } from "./document";
 import { draft } from "./document.test-fixture";
 
+it("ends a caption line at a sentence end so the next sentence never shows early", () => {
+  const words = ["I", "won't.", "All", "right,", "it's", "fine!", "Go"]
+    .map((text, i) => ({ id: `w${i}`, start: i, end: i + 1, text, highlight: false }));
+  const texts = (count: number) => captionGroups(words, count).map(group => group.map(w => w.text).join(" "));
+  expect(texts(4)).toEqual(["I won't.", "All right, it's fine!", "Go"]);
+  expect(texts(3)).toEqual(["I won't.", "All right, it's", "fine!", "Go"]);
+});
+
 it("keeps placements local to a caption occurrence across splits and repeated footage", () => {
   const doc = { ...draft, captions: { ...draft.captions, wordsPerLine: 1 }, segments: [{ id: "s", start: 0, end: 3 }, { id: "repeat", start: 0, end: 3 }] };
   const groups = captionGroups(mappedWords(doc), 1);

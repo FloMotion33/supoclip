@@ -378,10 +378,11 @@ def rebased_broll(document: EditDocument, cursor: float = 0) -> list[dict]:
 def rebased_caption_transforms(document: EditDocument, words: list[dict]) -> dict:
     """Carry caption placements to the fresh word IDs in a combined source."""
     from ..editor_document import caption_key, mapped_words
+    from ..media.captions import caption_line_bounds
     mapped = mapped_words(document)
     result = {}
-    for index in range(0, len(mapped), document.captions.wordsPerLine):
-        placement = document.captionTransforms.get(caption_key(document, mapped[index:index + document.captions.wordsPerLine]))
+    for index, stop in caption_line_bounds(mapped, document.captions.wordsPerLine):
+        placement = document.captionTransforms.get(caption_key(document, mapped[index:stop]))
         if placement is not None:
             key = json.dumps(["combined", words[index]["id"]], separators=(",", ":"), ensure_ascii=False)
             result[key] = placement.model_dump()

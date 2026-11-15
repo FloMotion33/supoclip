@@ -210,6 +210,17 @@ def test_caption_lines_never_straddle_a_planned_jump(video_path):
     assert list(captions._chunk_bounds(8, 3, [])) == [(0, 3), (3, 6), (6, 8)]
 
 
+def test_caption_lines_never_show_the_next_sentence_early():
+    words = [{"text": t} for t in ["I", "won't.", "All", "right,", "it's", "fine!", "Go"]]
+    # "All" must not join "I won't." on screen before it is spoken.
+    assert captions.caption_line_bounds(words, 4) == [(0, 2), (2, 6), (6, 7)]
+    assert captions.caption_line_bounds(words, 3) == [(0, 2), (2, 5), (5, 6), (6, 7)]
+    # Closing quotes and brackets still end the sentence; a passage break also splits.
+    quoted = [{"text": t} for t in ['"Stop."', "Now", "go"]]
+    assert captions.caption_line_bounds(quoted, 4) == [(0, 1), (1, 3)]
+    assert captions.caption_line_bounds(quoted, 4, [2]) == [(0, 1), (1, 2), (2, 3)]
+
+
 def test_caption_ass_breaks_the_line_at_the_beat_change(video_path):
     path = video_path.with_suffix(".ass")
     captions.build_assemblyai_ass_subtitles(

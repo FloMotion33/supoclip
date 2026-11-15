@@ -257,10 +257,24 @@ export function mappedWords(doc: EditDocument): CaptionWord[] {
   return result;
 }
 /** Fixed-size word groups, chunked exactly as the generation renderer does. */
+/** Matches the backend's SENTENCE_END_RE: terminal punctuation, then closers. */
+const SENTENCE_END = /[.!?]["')\]}]*$/;
+/**
+ * Caption lines of at most `count` words that never cross a sentence end, so
+ * a line never shows the next sentence's first words before they are spoken.
+ * The server render groups the same way (`caption_line_bounds`).
+ */
 export function captionGroups(words: CaptionWord[], count: number) {
   const groups: CaptionWord[][] = [];
-  for (let i = 0; i < words.length; i += count)
-    groups.push(words.slice(i, i + count));
+  let line: CaptionWord[] = [];
+  for (const word of words) {
+    line.push(word);
+    if (line.length >= count || SENTENCE_END.test(word.text.trim())) {
+      groups.push(line);
+      line = [];
+    }
+  }
+  if (line.length) groups.push(line);
   return groups;
 }
 /** A source-continuous run survives a split; repeated footage has its own ID. */
